@@ -98,7 +98,10 @@ def create_admin_routes(db):
         active_sessions = await db.chat_sessions.count_documents({"status": "active"})
         pending_withdrawals = await db.withdrawals.count_documents({"status": "pending"})
         pending_refunds = await db.refunds.count_documents({"status": "pending"})
-        pending_applications = await db.psychic_applications.count_documents({"status": "pending"})
+        pending_applications = (
+            await db.applications.count_documents({"status": {"$in": ["pending", "under_review"]}}) +
+            await db.psychic_applications.count_documents({"status": {"$in": ["pending", "under_review"]}})
+        )
         
         # Calculate total revenue (mock)
         total_revenue = 0
@@ -246,7 +249,12 @@ def create_admin_routes(db):
         try:
             query = {}
             if status and status != "all":
-                query["status"] = status
+                if status == "pending":
+                    query["status"] = {"$in": ["pending", "under_review"]}
+                elif status in ["approved", "accepted"]:
+                    query["status"] = {"$in": ["approved", "accepted"]}
+                else:
+                    query["status"] = status
             
             result = []
             
@@ -255,10 +263,11 @@ def create_admin_routes(db):
             for app in applications:
                 app_data = dict(app)
                 if '_id' in app_data:
-                    # Use _id as the id if no id field exists
                     if 'id' not in app_data:
                         app_data['id'] = str(app_data['_id'])
                     app_data['_id'] = str(app_data['_id'])
+                if 'full_name' in app_data and 'name' not in app_data:
+                    app_data['name'] = app_data['full_name']
                 result.append(app_data)
             
             # Also try 'psychic_applications' collection
@@ -269,20 +278,19 @@ def create_admin_routes(db):
                     if 'id' not in app_data:
                         app_data['id'] = str(app_data['_id'])
                     app_data['_id'] = str(app_data['_id'])
-                # Avoid duplicates
+                if 'full_name' in app_data and 'name' not in app_data:
+                    app_data['name'] = app_data['full_name']
                 if not any(r.get('id') == app_data.get('id') or r.get('email') == app_data.get('email') for r in result):
                     result.append(app_data)
             
-            # If no applications in DB, return mock pending applications as fallback
-            if len(result) == 0 and status == "pending":
+            # Only fallback to mock if DB total count across all applications is zero
+            total_db_apps = await db.applications.count_documents({}) + await db.psychic_applications.count_documents({})
+            if total_db_apps == 0 and status == "pending":
                 return PENDING_APPLICATIONS
             
             return result
         except Exception as e:
             print(f"Error fetching applications: {e}")
-            # Return mock data as fallback
-            if status == "pending":
-                return PENDING_APPLICATIONS
             return []
     
     @router.post("/applications/{app_id}/approve")
@@ -337,47 +345,70 @@ def create_admin_routes(db):
             return {"success": True, "psychic_id": new_psychic["id"], "message": "Psychic approved and now visible to users"}
         
         # Try database
-        app = await db.psychic_applications.find_one({"id": app_id})
+        app = await db.applications.find_one({"id": app_id})
+        target_collection = db.applications
+        if not app:
+            app = await db.psychic_applications.find_one({"id": app_id})
+            target_collection = db.psychic_applications
+            
         if not app:
             raise HTTPException(status_code=404, detail="Application not found")
         
         # Create psychic profile
         new_psychic = {
             "id": f"psy-{str(uuid.uuid4())[:8]}",
-            "name": app.get("full_name"),
+            "name": app.get("full_name") or app.get("name"),
             "email": app.get("email"),
             "description": app.get("bio"),
             "specialties": app.get("specialties", []),
-            "reading_methods": app.get("reading_methods", []),
+            "reading_methods": app.get("reading_methods", ["chat", "phone", "video"]),
             "chat_rate": app.get("chat_rate", 2.99),
             "phone_rate": app.get("phone_rate", 3.99),
             "video_rate": app.get("video_rate", 4.99),
             "online_status": "offline",
+            "status": "approved",
             "average_rating": 0,
             "total_readings": 0,
             "total_reviews": 0,
             "total_earnings": 0,
-            "profile_picture": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400",
+            "profile_picture": app.get("profile_picture") or "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400",
             "offers_chat": True,
             "offers_phone": True,
             "offers_video": True,
             "created_at": datetime.utcnow()
         }
         
-        await db.psychics.insert_one(new_psychic)
+        # Update or insert into psychics collection
+        await db.psychics.update_one(
+            {"email": new_psychic["email"]},
+            {"$set": new_psychic},
+            upsert=True
+        )
         
         # Update application status
-        await db.psychic_applications.update_one(
+        await target_collection.update_one(
             {"id": app_id},
             {
                 "$set": {
-                    "status": "approved",
+                    "status": "accepted",
                     "approved_at": datetime.utcnow()
                 }
             }
         )
         
         return {"success": True, "psychic_id": new_psychic["id"]}
+    
+    @router.patch("/applications/{app_id}/status")
+    @router.put("/applications/{app_id}/status")
+    async def update_application_status(app_id: str, payload: dict):
+        """Update application status endpoint (used by Admin App)"""
+        status = payload.get("status")
+        reason = payload.get("reason", "")
+        if status in ["approved", "accepted"]:
+            return await approve_application(app_id)
+        elif status == "rejected":
+            return await reject_application(app_id, reason=reason)
+        return {"success": True}
     
     @router.post("/applications/{app_id}/reject")
     async def reject_application(app_id: str, reason: str = "Does not meet our requirements"):

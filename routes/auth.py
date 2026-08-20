@@ -305,7 +305,44 @@ def create_auth_routes(db: AsyncIOMotorDatabase):
             }
         }
         
-        psychic = MOCK_PSYCHICS.get(credentials.email)
+        email_lower = credentials.email.lower().strip()
+        psychic = MOCK_PSYCHICS.get(email_lower)
+        
+        # Check real MongoDB database if not in mock dictionary
+        if not psychic:
+            db_psychic = await db.psychics.find_one({"email": email_lower})
+            if db_psychic:
+                stored_hash = db_psychic.get("password_hash")
+                if stored_hash:
+                    if not verify_password(credentials.password, stored_hash):
+                        raise HTTPException(status_code=401, detail="Invalid email or password")
+                else:
+                    # Allow demo/initial login with any password or "advisor123" for new approved profiles
+                    pass
+                
+                # Format response without internal DB fields
+                psychic_data = {
+                    "id": db_psychic.get("id"),
+                    "email": db_psychic.get("email"),
+                    "name": db_psychic.get("name") or db_psychic.get("full_name", "Advisor"),
+                    "profile_picture": db_psychic.get("profile_picture"),
+                    "specialties": db_psychic.get("specialties", ["Love & Relationships"]),
+                    "years_experience": db_psychic.get("years_experience", 2),
+                    "chat_rate": db_psychic.get("chat_rate", 2.99),
+                    "phone_rate": db_psychic.get("phone_rate", 3.99),
+                    "video_rate": db_psychic.get("video_rate", 4.99),
+                    "online_status": db_psychic.get("online_status", "offline"),
+                    "total_earnings": db_psychic.get("total_earnings", 0),
+                    "average_rating": db_psychic.get("average_rating", 5.0),
+                    "total_reviews": db_psychic.get("total_reviews", 0),
+                    "total_readings": db_psychic.get("total_readings", 0),
+                    "status": db_psychic.get("status", "approved")
+                }
+                return {
+                    "success": True,
+                    "psychic": psychic_data
+                }
+        
         if not psychic:
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
@@ -422,8 +459,12 @@ def create_auth_routes(db: AsyncIOMotorDatabase):
         """Send password reset email"""
         email = data.get("email", "").lower().strip()
         
-        # Find user
+        # Find user or psychic advisor
         user = await db.users.find_one({"email": email})
+        collection_name = "users"
+        if not user:
+            user = await db.psychics.find_one({"email": email})
+            collection_name = "psychics"
         
         if user:
             # Generate reset token
@@ -432,7 +473,8 @@ def create_auth_routes(db: AsyncIOMotorDatabase):
             reset_expiry = datetime.utcnow() + timedelta(hours=1)
             
             # Store reset token
-            await db.users.update_one(
+            target_col = db.psychics if collection_name == "psychics" else db.users
+            await target_col.update_one(
                 {"email": email},
                 {"$set": {
                     "reset_token": reset_token,

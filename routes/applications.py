@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from typing import List, Optional
 from datetime import datetime
 import uuid
 import sys
+import os
+import aiofiles
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -148,6 +150,44 @@ The Psychic Advisor Team
         
         return ApplicationResponse(**new_application.dict())
     
+    @router.post("/upload-video")
+    async def upload_video(file: UploadFile = File(...)):
+        """
+        Upload a video file from the advisor app and store it on the server.
+        Returns a URL for the stored video that the admin can stream.
+        """
+        # Create upload directory if it doesn't exist
+        upload_dir = Path(__file__).parent.parent / "uploads" / "advisor_videos"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_ext = Path(file.filename).suffix if file.filename else ".mp4"
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        file_path = upload_dir / unique_filename
+        
+        # Save the file
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()
+            await out_file.write(content)
+        
+        # Return a URL to access the video
+        video_url = f"/api/applications/video/{unique_filename}"
+        return {"video_url": video_url, "filename": unique_filename}
+    
+    @router.get("/video/{filename}")
+    async def serve_video(filename: str):
+        """Serve a stored advisor video file"""
+        from fastapi.responses import FileResponse
+        
+        upload_dir = Path(__file__).parent.parent / "uploads" / "advisor_videos"
+        file_path = upload_dir / filename
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        return FileResponse(str(file_path), media_type="video/mp4")
+
+
     @router.get("/", response_model=List[ApplicationResponse])
     async def get_all_applications(
         status: Optional[str] = None,
