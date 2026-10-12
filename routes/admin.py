@@ -1289,14 +1289,17 @@ def create_admin_routes(db):
     @router.get("/hiring-status")
     async def get_hiring_status():
         """Get current hiring status"""
-        settings = await db.platform_settings.find_one({"key": "hiring_status"})
-        if not settings:
-            # Default to hiring open
+        try:
+            settings = await db.platform_settings.find_one({"key": "hiring_status"})
+            if not settings:
+                # Default to hiring open
+                return {"is_hiring": True, "message": ""}
+            return {
+                "is_hiring": settings.get("is_hiring", True),
+                "message": settings.get("message", "")
+            }
+        except Exception:
             return {"is_hiring": True, "message": ""}
-        return {
-            "is_hiring": settings.get("is_hiring", True),
-            "message": settings.get("message", "")
-        }
     
     @router.put("/hiring-status")
     async def update_hiring_status(data: dict):

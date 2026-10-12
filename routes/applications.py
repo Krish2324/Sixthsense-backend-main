@@ -243,7 +243,10 @@ The Psychic Advisor Team
     @router.get("/email/{email}")
     async def get_application_by_email(email: str):
         """Get full application data by email (for login flow)"""
-        application = await db.applications.find_one({"email": email.lower()})
+        try:
+            application = await db.applications.find_one({"email": email.lower()})
+        except Exception:
+            return None
         if not application:
             return None
         return {

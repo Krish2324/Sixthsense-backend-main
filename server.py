@@ -379,7 +379,7 @@ app.include_router(stripe_connect_router, prefix="/api")
 ALLOWED_ORIGINS = [
     origin.strip() for origin in os.getenv(
         "ALLOWED_ORIGINS",
-        "http://localhost:8081,http://localhost:19006,http://localhost:3000,http://127.0.0.1:8081,http://192.168.29.113:8081,http://192.168.29.249:8081,https://web-production-9acf9.up.railway.app"
+        "http://localhost:8081,http://localhost:19006,http://localhost:3000,http://127.0.0.1:8081,http://192.168.29.74:8081,https://api.sixthsensepsychics.com,https://sixthsensepsychics.com,https://www.sixthsensepsychics.com"
     ).split(",") if origin.strip() and origin.strip() != "*"
 ]
 

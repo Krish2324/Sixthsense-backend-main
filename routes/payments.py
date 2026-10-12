@@ -109,9 +109,9 @@ def create_payment_routes(db):
         """Create a Stripe Checkout Session for payment"""
         amount = data.get("amount", 0)  # Amount in cents
         credits = data.get("credits", 0)
-        user_id = data.get("user_id", "")
-        success_url = data.get("success_url", "https://web-production-9acf9.up.railway.app/wallet?success=true")
-        cancel_url = data.get("cancel_url", "https://web-production-9acf9.up.railway.app/wallet?cancelled=true")
+        app_url = os.getenv("APP_URL", "https://sixthsensepsychics.com")
+        success_url = data.get("success_url", f"{app_url}/wallet?success=true")
+        cancel_url = data.get("cancel_url", f"{app_url}/wallet?cancelled=true")
         
         if STRIPE_ENABLED:
             try:
